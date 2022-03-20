@@ -40,6 +40,7 @@ basicConfig(format='[%(asctime)s - %(levelname)s] %(message)s',
 logger = getLogger("MHDDoS")
 logger.setLevel("INFO")
 ctx: SSLContext = create_default_context(cafile=where())
+#ctx: ssl.SSLContext(ssl_version=ssl.PROTOCOL_SSLv3) = create_default_context(cafile=where())
 ctx.check_hostname = False
 ctx.verify_mode = CERT_NONE
 
