@@ -1,9 +1,8 @@
-FROM python:3.8.12-buster
+FROM ghcr.io/devilld/py-dev
 
 WORKDIR /app
-COPY ./ ./
-COPY files files
+COPY . .
 
-RUN pip3 install -r requirements.txt
+RUN pip3 install --no-cache-dir -r requirements.txt
 
 ENTRYPOINT ["python3", "/app/start.py"]
